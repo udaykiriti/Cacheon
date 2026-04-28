@@ -1,205 +1,216 @@
 Cacheon - Multi-level Cache Simulator
 
-A fast cache simulator for analyzing memory access patterns and cache behavior.
+A fast, configurable cache simulator for analyzing memory access patterns
+and multi-level cache behavior. Simulates an L1/L2/L3 hierarchy with
+optional TLB simulation, software prefetching, and write policy control.
 
-NOTE! The cache hierarchy is now configurable via CLI flags, so you
-can change sizes, line sizes, and associativity without editing code.
+NOTE: The cache hierarchy is fully configurable via CLI flags. Change
+sizes, line sizes, and associativity without editing code.
 Use --l1/--l2/--l3 with SIZE,LINE,ASSOC (e.g., 32K,64,8).
 
-In addition to the tweakables in the code itself, there are hardcoded
-default values in the command line interface:
-
-      Default test size: 8 MB
-      Default stride:   64 bytes
-
-To give meaningful numbers, the stride should generally be at least the
-size of your cache line, although particularly in cases with multiple
-different cache line sizes, you might just use different strides and see
-how it affects the hit rates.
-
-Note that the "stride" is still used when doing the random access case,
-but since the end result will be chasing random addresses it won't be a
-"stride" in memory as much as just the granularity of the access pattern.
-You can use odd stride values to see how unaligned loads change the picture.
+Default values:
+      Default test size:  8 MB
+      Default stride:    64 bytes
 
 BUILD
 
-make
+    make
 
 RUN
 
 Quick test:
-./cacheon 8M 64
+    ./cacheon 8M 64
 
 Full benchmark (4K to 256M):
-./cacheon --all-sizes
+    ./cacheon --all-sizes
 
 Test with random access:
-./cacheon 128M 64 -r
+    ./cacheon 128M 64 -r
 
-Test with hugepage mode:
-./cacheon 256M 256 -H
+Test with hugepage mode (sets TLB page size to 2MB):
+    ./cacheon 256M 256 -H
 
 Test with both random and hugepage:
-./cacheon 128M 64 -Hr
+    ./cacheon 128M 64 -Hr
 
-Quiet mode (for scripts and pipelines):
-./cacheon 64M 64 -q
+Quiet mode (CSV output for scripts and pipelines):
+    ./cacheon 64M 64 -q
+
+Override cache config and write policy:
+    ./cacheon 64M 64 --l1 64K,64,8 --l2 512K,64,8 --l3 16M,64,16 --write-policy wt
+
+Enable stride prefetching with a 64-entry TLB:
+    ./cacheon 128M 64 --prefetch stride --tlb-entries 64
 
 WHAT IS IT?
 
 Cacheon simulates a 3-level cache hierarchy and traces memory accesses
-through it. Given a memory address range and stride pattern (sequential
-or random), it shows cache hit/miss behavior.
-
-IMPORTANT NOTES
-
-1. Accuracy depends on the access patterns. Results can vary significantly
-   based on the test size relative to cache sizes. Run tests multiple
-   times with different sizes to see patterns.
-
-2. The cache behavior depends heavily on the working set size:
-   - If test size << L1D size, you'll see high L1D hit rates
-   - If L1D size < test size < L2 size, L1D misses hit in L2
-   - If L2 size < test size < L3 size, L2 misses hit in L3
-   - If test size >> L3 size, many L3 misses (memory fetch required)
-
-3. Stride matters for cache associativity conflicts. With 64-byte cache
-   lines and 4-way L2 associativity, you can have conflicts at higher
-   memory regions. Use different stride values to experiment.
-
-4. Physical memory fragmentation affects results. If you request hugepage
-   mode (-H), the cache simulation treats memory as contiguous, which can
-   improve hit rates. This is advisory and depends on OS support.
-
-5. The simulation runs multiple passes over the data to generate realistic
-   hit rates. Small working sets get more passes (for better caching).
-   Large working sets get fewer passes.
-
-6. Random access (-r) uses a fixed seed (12345) for reproducibility, but
-   real random patterns can give different results depending on memory
-   allocation layout.
+through it. Given a memory address range and access pattern (sequential
+or random), it reports cache hit/miss rates per level, miss classification
+(cold/conflict/capacity), write-back statistics, and AMAT.
 
 USAGE
 
-Syntax:
-cacheon SIZE STRIDE [OPTIONS]
+    cacheon [SIZE] [STRIDE] [OPTIONS]
 
 SIZE:
-Memory size to test. Examples: 4K, 8M, 256M, 1G
-Default: 8M
+    Memory size to test. Examples: 4K, 8M, 256M, 1G
+    Default: 8M
 
 STRIDE:
-Stride between accesses in bytes. Should match cache line size.
-Default: 64
+    Stride between accesses in bytes. Should match your cache line size.
+    Default: 64
+    Note: random access mode requires a power-of-two stride (64, 128, 256, ...).
 
 OPTIONS:
--r, --random Random access pattern (default: sequential)
--H, --hugepage Hugepage/contiguous memory mode
--Hr, -rH Both random and hugepage
--q, --quiet Quiet output (for scripting)
---l1 SIZE,LINE,ASSOC Override L1 config (e.g., 32K,64,8)
---l2 SIZE,LINE,ASSOC Override L2 config
---l3 SIZE,LINE,ASSOC Override L3 config
---write-policy wb|wt Write-back or write-through
---write-rate N Percent writes (0-100)
---prefetch none|next|stride Prefetcher mode
---tlb-entries N Enable TLB with N entries
---page-size SIZE TLB page size (default 4K)
---all-sizes Run full benchmark across 4K to 256M sizes
--h, --help Show help
--v, --version Show version
+    -r, --random               Random access pattern (default: sequential)
+    -H, --hugepage             Set TLB page size to 2MB (hugepage simulation)
+    -Hr, -rH                   Both random and hugepage
+    -q, --quiet                Quiet output: CSV format size,l1%,l2%,l3%
+    -l, --lru                  Use LRU replacement policy (default: FIFO)
+    --all-sizes                Run full benchmark across 4K to 256M sizes
+    --l1 SIZE,LINE,ASSOC       Override L1 config (e.g., 32K,64,8)
+    --l2 SIZE,LINE,ASSOC       Override L2 config
+    --l3 SIZE,LINE,ASSOC       Override L3 config
+    --write-policy wb|wt       Write-back or write-through
+    --write-rate N             Percent writes 0-100 (default: 0, read-only)
+    --prefetch none|next|stride  Prefetcher mode (default: none)
+    --tlb-entries N            Enable TLB simulation with N entries
+    --page-size SIZE           TLB page size (default 4K)
+    -h, --help                 Show help
+    -v, --version              Show version
 
 EXAMPLES
 
 Test 32MB with sequential access:
-./cacheon 32M 64
+    ./cacheon 32M 64
 
 Test 256MB with random access:
-./cacheon 256M 64 -r
+    ./cacheon 256M 64 -r
 
-Test with larger stride (e.g., for systems with 256-byte cache lines):
-./cacheon 128M 256
+Test with larger stride (256-byte cache lines):
+    ./cacheon 128M 256
 
-Custom cache hierarchy and write policy:
-./cacheon 64M 64 --l1 64K,64,8 --l2 512K,64,8 --l3 16M,64,16 --write-policy wt
+Use LRU replacement instead of FIFO:
+    ./cacheon 8M 64 -l
 
-Enable prefetching and a small TLB:
-./cacheon 128M 64 --prefetch stride --tlb-entries 64 --page-size 4K
+Simulate 25% writes with write-through policy:
+    ./cacheon 128M 64 --write-rate 25 --write-policy wt
 
-Test with hugepage mode for contiguous memory:
-./cacheon 512M 64 -H
+Enable next-line prefetching:
+    ./cacheon 128M 64 --prefetch next
 
-Random test with hugepage:
-./cacheon 128M 128 -Hr
+Enable TLB simulation:
+    ./cacheon 128M 64 --tlb-entries 64 --page-size 4K
 
 Quiet mode for scripting:
-./cacheon 16M 64 -q
+    ./cacheon 16M 64 -q
 
 Run full benchmark suite:
-make run
+    make run
 
-GOTCHAS
+BEHAVIOR NOTES
 
-1. The test assumes you have enough free memory to allocate the requested
-   size. If you request 256M but only 128M is free, the simulation will
-   use whatever is available.
+1. Working set vs cache size determines hit rates:
+   - test size << L1 size:  high L1 hit rate
+   - L1 size < test size < L2 size: L1 misses hit in L2
+   - L2 size < test size < L3 size: L2 misses hit in L3
+   - test size >> L3 size:  many L3 misses (memory fetch required)
 
-2. The cache simulation is idealized. Real caches have prefetchers, page
-   table caches (TLB), and other effects that this simulation doesn't
-   model. Use this to understand general cache behavior, not to predict
-   exact CPU performance.
+2. Stride affects conflict patterns. With 64-byte cache lines and 4-way
+   L2, certain power-of-two strides cause set conflicts. Try different
+   stride values to observe this.
 
-3. On systems with multiple cache sizes (like 4-way vs 8-way), different
-   strides will show different conflict patterns. Experiment.
+3. Random access mode uses a fixed seed (12345) for the first pass.
+   Each subsequent pass uses the continued RNG state, so passes are
+   NOT identical — the working set appears to be randomly sampled on
+   each pass rather than repeating the same sequence.
 
-4. The hugepage mode (-H) doesn't actually allocate hugepages - it just
-   simulates contiguous memory allocation. Real hugepages can have better
-   TLB performance (which this simulator doesn't model).
+4. -H / --hugepage sets the TLB page size to 2MB for TLB simulation
+   purposes. It does not allocate actual hugepages.
 
-5. The repeated access pattern approach simulates a working set that fits
-   in cache. Real programs have more complex access patterns, prefetching,
-   and temporal/spatial locality variations.
+5. Pass count scales with working set size: small sets get 10 passes,
+   medium sets get 5, large sets get 2, to simulate realistic warm-up.
 
-OUTPUT
+6. LRU replacement (-l) uses O(1) list-splice + iterator-map internally,
+   so it adds no extra per-access cost vs FIFO.
 
-# CACHE REPORT
+MISS CLASSIFICATION
 
-Total Accesses: 131072
-Pattern: Sequential
+The simulator classifies each demand miss as one of:
+    cold      - first time this cache line was ever accessed
+    conflict  - line was seen before and was in a fully-associative
+                shadow cache (would have hit if fully associative)
+    capacity  - line was seen before but evicted due to working set size
 
-L1D Cache (32KB):
-[ ] 0.00%
-Hits: 0 | Misses: 131072
+OUTPUT FORMAT
 
-L2 Cache (256KB):
-[ ] 0.00%
-Hits: 0 | Misses: 131072
+    CACHE REPORT
+    ============
 
-L3 Cache (8MB):
-[========== ] 50.00%
-Hits: 65536 | Misses: 65536
+    Total Accesses: 262144
+    Pattern: Sequential
 
-AMAT (Average Memory Access Time): 120.00 cycles
+    L1D Sim:
+      [====                ] 20.00%
+      Demand Hits: 52428 | Demand Misses: 209716
+      Prefetch Hits: 0   | Prefetch Misses: 0
+      Miss Breakdown: cold 131072, conflict 0, capacity 78644
+      Write-Backs: 0 | Dirty Evictions: 0 | Write-Through Writes: 0
 
-The output shows:
+    L2 Sim:
+      ...
 
-1. Progress bar [==== ] visualization of hit rate
-2. Percentage (0-100%) for each cache level
-3. Absolute hit/miss counts
-4. AMAT in CPU cycles (how long each access takes on average)
+    L3 Sim:
+      ...
 
-AMAT Calculation
+    AMAT (Average Memory Access Time): 83.20 cycles
 
-Average Memory Access Time = 4×(L1_hit%) + 12×(L1_miss% × L2_hit%) + 40×(L1_miss% × L2_miss% × L3_hit%) + 200×(all_misses%)
+Field meanings:
+    Progress bar [===   ]  Visual hit rate (20 chars wide)
+    Percentage            Demand hit rate (0-100%)
+    Demand Hits/Misses    Explicit (non-prefetch) accesses
+    Prefetch Hits/Misses  Prefetcher-issued accesses
+    Miss Breakdown        cold / conflict / capacity classification
+    Write-Backs           Dirty lines flushed to next level on eviction
+    Dirty Evictions       Same as write-backs (write-back policy)
+    Write-Through Writes  Writes propagated immediately (write-through policy)
 
-Where cycle times are:
-L1D hit: 4 cycles
-L2 hit: 12 cycles
-L3 hit: 40 cycles
-Memory: 200 cycles
+AMAT FORMULA
 
-Lower AMAT means faster memory access on average.
+    AMAT = 4  * L1_hit_rate
+         + 12 * L1_miss_rate * L2_hit_rate
+         + 40 * L1_miss_rate * L2_miss_rate * L3_hit_rate
+         + 200* L1_miss_rate * L2_miss_rate * L3_miss_rate
+
+    Cycle costs: L1=4, L2=12, L3=40, Memory=200
+
+    Lower AMAT = faster average memory access.
+
+CHANGELOG (recent patches)
+
+    Bug fixes applied:
+    - parseSize now uses strtoull (was strtoll; accepted negative sizes)
+    - Random access mode validates stride is power-of-two before running
+    - -H / --hugepage now correctly sets TLB page size to 2MB (was no-op)
+    - Positional args (SIZE, STRIDE) now parsed by order seen, not argv index
+      (flags before SIZE no longer silently discard the size argument)
+    - validateCacheConfig now rejects size=0 in addition to lineSize=0
+    - FA shadow cache eviction off-by-one corrected
+
+    Code improvements:
+    - LRU replacement is now O(1) per access (list-splice + iterator map);
+      previously O(n) linear scan per hit
+    - RNG no longer reseeds between passes — each pass uses a unique
+      random sequence instead of repeating the same addresses
+    - Dirty-bit tracking split into a dedicated set (was overloaded onto
+      the presence map)
+    - TLB only constructed when --tlb-entries is specified
+    - parseOptions no longer calls std::exit() internally; help/version
+      flags are returned and handled in main
+    - toLowerStr uses std::transform
+    - sizes[] array is now constexpr std::array
+    - validateCacheConfig: removed redundant size < denom check
 
 LICENSE
 

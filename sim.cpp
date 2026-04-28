@@ -1,8 +1,7 @@
 #include "sim.h"
 
-#include <algorithm>
+#include <cassert>
 #include <cctype>
-#include <cstddef>
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>
@@ -11,122 +10,118 @@
 #include <string>
 
 namespace {
-  constexpr uint64_t CYCLES_L1 = 4;
-  constexpr uint64_t CYCLES_L2 = 12;
-  constexpr uint64_t CYCLES_L3 = 40;
-  constexpr uint64_t CYCLES_MEMORY = 200;
+  // Cycle costs sourced from CACHEON_CYCLES_* defines in sim.h (overridable at compile time)
+  constexpr uint64_t CYCLES_L1     = CACHEON_CYCLES_L1;
+  constexpr uint64_t CYCLES_L2     = CACHEON_CYCLES_L2;
+  constexpr uint64_t CYCLES_L3     = CACHEON_CYCLES_L3;
+  constexpr uint64_t CYCLES_MEMORY = CACHEON_CYCLES_MEMORY;
 
   constexpr uint64_t RANDOM_SEED = 12345;
-  constexpr uint64_t WRITE_SEED = 67890;
+  constexpr uint64_t WRITE_SEED  = 67890;
 
   struct PrefetchState {
-    bool hasLast = false;
-    uint64_t lastAddr = 0;
+    bool     hasLast   = false;
+    uint64_t lastAddr  = 0;
     uint64_t lastStride = 0;
   };
 
-  void updateOrder(std::deque<uint64_t> &order, uint64_t tag) {
-    auto it = std::find(order.begin(), order.end(), tag);
-    if (it != order.end()) {
-      order.erase(it);
-      order.push_back(tag);
+  void accessAll(Sim &l1d, Sim &l2, Sim &l3, uint64_t addr, bool isWrite, bool isPrefetch) {
+    if (!l1d.access(addr, isWrite, isPrefetch)) {
+      if (!l2.access(addr, isWrite, isPrefetch)) {
+        (void)l3.access(addr, isWrite, isPrefetch);
+      }
     }
   }
-}
+} // namespace
 
-Sim::Sim(const CacheConfig &cfg): config(cfg) {
-  const std::size_t numSets = static_cast<std::size_t>(config.size / (config.lineSize * config.associativity));
+Sim::Sim(const CacheConfig &cfg) : config(cfg) {
+  const std::size_t numSets =
+      static_cast<std::size_t>(config.size / (config.lineSize * config.associativity));
   sets.resize(numSets);
-  setOrder.resize(numSets);
   faCapacity = config.lineSize ? (config.size / config.lineSize) : 0;
 }
 
 bool Sim::access(uint64_t addr, bool isWrite, bool isPrefetch) {
   const std::size_t numSets = sets.size();
-  if (numSets == 0) {
-    return false;
-  }
+  if (numSets == 0) return false;
 
   const std::size_t setIndex = static_cast<std::size_t>((addr / config.lineSize) % numSets);
-  const uint64_t tag = addr / (config.lineSize * numSets);
-  auto &set = sets[setIndex];
-  auto &order = setOrder[setIndex];
+  const uint64_t    tag      = addr / (config.lineSize * numSets);
 
-  auto it = set.find(tag);
-  if (it != set.end()) {
-    if (isPrefetch) {
-      stats.prefetchHits++;
-    }
-    else {
-      stats.demandHits++;
-    }
+  auto &set = sets[setIndex];
+
+  // --- Cache hit ---
+  if (set.contains(tag)) {
+    isPrefetch ? stats.prefetchHits++ : stats.demandHits++;
 
     if (config.useLRU) {
-      updateOrder(order, tag);
+      set.promote(tag);
     }
 
     if (isWrite) {
       if (config.writePolicy == WritePolicy::WriteBack) {
-        it->second = true;
-      }
-      else {
+        set.dirtyBits.insert(tag);
+      } else {
         stats.writeThroughWrites++;
       }
     }
 
     if (faCapacity > 0) {
-      updateOrder(faOrder, tag);
+      faShadow.promote(tag);
     }
+#ifdef CACHEON_DEBUG
+    std::cerr << "[debug] HIT  set=" << setIndex << " tag=" << tag << "\n";
+#endif
     return true;
   }
 
+  // --- Cache miss ---
   if (isPrefetch) {
     stats.prefetchMisses++;
-  }
-  else {
+  } else {
     stats.demandMisses++;
     const bool isCold = seenTags.insert(tag).second;
     if (isCold) {
       stats.coldMisses++;
-    }
-    else if (faTags.count(tag)) {
+    } else if (faShadow.contains(tag)) {
       stats.conflictMisses++;
-    }
-    else {
+    } else {
       stats.capacityMisses++;
     }
+#ifdef CACHEON_DEBUG
+    const char *missType = isCold ? "cold" : faShadow.contains(tag) ? "conflict" : "capacity";
+    std::cerr << "[debug] MISS set=" << setIndex << " tag=" << tag << " " << missType << "\n";
+#endif
   }
 
+  // Evict if the set is full
   if (set.size() >= config.associativity) {
-    const uint64_t victim = order.front();
-    order.pop_front();
-    const bool victimDirty = set[victim];
-    if (victimDirty && config.writePolicy == WritePolicy::WriteBack) {
+    bool wasDirty = false;
+    set.evict(&wasDirty);
+    
+    if (wasDirty && config.writePolicy == WritePolicy::WriteBack) {
       stats.dirtyEvictions++;
       stats.writeBacks++;
     }
-    set.erase(victim);
   }
 
-  const bool isDirty = isWrite && (config.writePolicy == WritePolicy::WriteBack);
-  set[tag] = isDirty;
-  order.push_back(tag);
-
-  if (isWrite && config.writePolicy == WritePolicy::WriteThrough) {
+  // Insert new tag
+  const bool isDirtyWrite = isWrite && (config.writePolicy == WritePolicy::WriteBack);
+  set.insert(tag, isDirtyWrite);
+  
+  if (isWrite && !isDirtyWrite) {
     stats.writeThroughWrites++;
   }
 
+  // Update fully-associative shadow for conflict-miss classification
   if (faCapacity > 0) {
-    if (!faTags.insert(tag).second) {
-      updateOrder(faOrder, tag);
-    }
-    else {
-      if (faTags.size() > faCapacity) {
-        const uint64_t faVictim = faOrder.front();
-        faOrder.pop_front();
-        faTags.erase(faVictim);
+    if (faShadow.contains(tag)) {
+      faShadow.promote(tag);
+    } else {
+      if (faShadow.size() >= faCapacity) {
+        faShadow.evict();
       }
-      faOrder.push_back(tag);
+      faShadow.insert(tag);
     }
   }
   return false;
@@ -137,68 +132,34 @@ double Sim::hitRate() const {
   return total ? (100.0 * stats.demandHits / total) : 0.0;
 }
 
-void Sim::reset() {
-  stats = CacheStats{};
-  for (auto &s : sets)
-    s.clear();
-  for (auto &o : setOrder)
-    o.clear();
-  seenTags.clear();
-  faTags.clear();
-  faOrder.clear();
-}
-
-Tlb::Tlb(const TlbConfig &cfg)
-    : config(cfg) {
-}
+Tlb::Tlb(const TlbConfig &cfg) : config(cfg) {}
 
 bool Tlb::access(uint64_t addr) {
-  if (config.entries == 0 || config.pageSize == 0) {
-    return true;
-  }
+  // Caller must only invoke this when entries > 0 and pageSize > 0
+  assert(config.entries > 0 && config.pageSize > 0);
 
   const uint64_t tag = addr / config.pageSize;
-  if (tags.count(tag)) {
+
+  if (store.contains(tag)) {
     stats.hits++;
     if (config.useLRU) {
-      updateOrder(order, tag);
+      store.promote(tag);
     }
     return true;
   }
 
   stats.misses++;
-  if (tags.size() >= config.entries) {
-    const uint64_t victim = order.front();
-    order.pop_front();
-    tags.erase(victim);
+  if (store.size() >= config.entries) {
+    store.evict();
   }
-  tags.insert(tag);
-  order.push_back(tag);
+  store.insert(tag);
   return false;
 }
 
-void Tlb::reset() {
-  stats = TlbStats{};
-  tags.clear();
-  order.clear();
-}
-
 uint64_t passCount(uint64_t accessCount) {
-  if (accessCount < 100) {
-    return 10;
-  }
-  if (accessCount < 1000) {
-    return 5;
-  }
+  if (accessCount < 100)  return 10;
+  if (accessCount < 1000) return 5;
   return 2;
-}
-
-void accessAll(Sim &l1d, Sim &l2, Sim &l3, uint64_t addr, bool isWrite, bool isPrefetch) {
-  if (!l1d.access(addr, isWrite, isPrefetch)) {
-    if (!l2.access(addr, isWrite, isPrefetch)) {
-      l3.access(addr, isWrite, isPrefetch);
-    }
-  }
 }
 
 void runSimulation(Sim &l1d, Sim &l2, Sim &l3, Tlb *tlb, uint64_t size, uint64_t stride,
@@ -213,15 +174,13 @@ void runSimulation(Sim &l1d, Sim &l2, Sim &l3, Tlb *tlb, uint64_t size, uint64_t
 
   auto recordAccess = [&](uint64_t addr, bool isWrite, bool isPrefetch) {
     if (tlb && !isPrefetch) {
-      tlb->access(addr);
+      (void)tlb->access(addr);
     }
     accessAll(l1d, l2, l3, addr, isWrite, isPrefetch);
   };
 
   auto maybePrefetch = [&](uint64_t addr) {
-    if (prefetcher == Prefetcher::None) {
-      return;
-    }
+    if (prefetcher == Prefetcher::None) return;
 
     if (prefetcher == Prefetcher::NextLine) {
       recordAccess(addr + l1d.config.lineSize, false, true);
@@ -237,33 +196,28 @@ void runSimulation(Sim &l1d, Sim &l2, Sim &l3, Tlb *tlb, uint64_t size, uint64_t
         prefetchState.lastStride = strideValue;
       }
       prefetchState.lastAddr = addr;
-      prefetchState.hasLast = true;
+      prefetchState.hasLast  = true;
     }
   };
 
   for (uint64_t pass = 0; pass < numPasses; pass++) {
     for (uint64_t i = 0; i < accessCount; i++) {
-      const uint64_t addr = randomAccess ? (addrDis(addrGen) & ~(stride - 1)) : (i * stride);
-      const bool isWrite = writeRate > 0 && writeDis(writeGen) < writeRate;
+      const uint64_t addr    = randomAccess ? (addrDis(addrGen) & ~(stride - 1)) : (i * stride);
+      const bool     isWrite = writeRate > 0 && writeDis(writeGen) < writeRate;
       recordAccess(addr, isWrite, false);
       maybePrefetch(addr);
       totalAccesses++;
     }
-    if (randomAccess) {
-      addrGen.seed(RANDOM_SEED);
-      writeGen.seed(WRITE_SEED);
-    }
+    // Don't reseed for random access — each pass should use a different sequence,
+    // not repeat the same addresses (the old reseed made all passes identical).
   }
 }
 
 std::string makeBar(double percentage, int width) {
   const int filled = static_cast<int>(percentage / 100.0 * width);
-  std::string bar = "[";
-  for (int i = 0; i < width; i++){
-    bar += (i < filled) ? "=" : " ";
-  }
-  bar += "]";
-  return bar;
+  return '[' + std::string(static_cast<std::size_t>(filled), '=')
+             + std::string(static_cast<std::size_t>(width - filled), ' ')
+             + ']';
 }
 
 uint64_t parseSize(const char *str) {
@@ -271,27 +225,23 @@ uint64_t parseSize(const char *str) {
     throw std::runtime_error("Empty size string");
   }
 
-  char *endptr;
-  const uint64_t num = std::strtoll(str, &endptr, 10);
+  char *endptr = nullptr;
+  const uint64_t num = std::strtoull(str, &endptr, 10);
 
-  if (num == 0 || (endptr == str && *str != '0')) {
+  if (endptr == str) {
     throw std::runtime_error(std::string("Invalid size '") + str + "'");
   }
 
-  if (!endptr || *endptr == '\0')
-    return num;
+  if (*endptr == '\0') return num;
 
   if (*(endptr + 1) != '\0') {
     throw std::runtime_error(std::string("Invalid size '") + str + "'");
   }
 
   switch (std::tolower(static_cast<unsigned char>(*endptr))) {
-  case 'k':
-    return num * 1024;
-  case 'm':
-    return num * 1024 * 1024;
-  case 'g':
-    return num * 1024 * 1024 * 1024;
+  case 'k': return num * 1024ULL;
+  case 'm': return num * 1024ULL * 1024ULL;
+  case 'g': return num * 1024ULL * 1024ULL * 1024ULL;
   default:
     throw std::runtime_error(std::string("Unknown suffix '") + *endptr + "' in size");
   }
@@ -299,44 +249,51 @@ uint64_t parseSize(const char *str) {
 
 void printResults(const Sim &l1d, const Sim &l2, const Sim &l3, const Tlb *tlb,
                   uint64_t totalAccesses, bool sequential) {
-  const double l1dRate = l1d.hitRate();
-  const double l2Rate = l2.hitRate();
-  const double l3Rate = l3.hitRate();
+  const double l1Hit = l1d.hitRate();
+  const double l2Hit = l2.hitRate();
+  const double l3Hit = l3.hitRate();
 
-  const double amat = CYCLES_L1 * (l1dRate / 100.0) +
-                      CYCLES_L2 * ((100.0 - l1dRate) / 100.0) * (l2Rate / 100.0) +
-                      CYCLES_L3 * ((100.0 - l1dRate) / 100.0) * ((100.0 - l2Rate) / 100.0) * (l3Rate / 100.0) +
-                      CYCLES_MEMORY * ((100.0 - l1dRate) / 100.0) * ((100.0 - l2Rate) / 100.0) * ((100.0 - l3Rate) / 100.0);
+  const double l1Miss = (100.0 - l1Hit) / 100.0;
+  const double l2Miss = (100.0 - l2Hit) / 100.0;
+  const double l3Miss = (100.0 - l3Hit) / 100.0;
+
+  // AMAT = L1_hit_time + L1_miss_rate*(L2_hit_time + L2_miss_rate*(L3_hit_time + L3_miss_rate*mem))
+  const double amat = CYCLES_L1     * (l1Hit / 100.0)
+                    + CYCLES_L2     * l1Miss * (l2Hit / 100.0)
+                    + CYCLES_L3     * l1Miss * l2Miss * (l3Hit / 100.0)
+                    + CYCLES_MEMORY * l1Miss * l2Miss * l3Miss;
 
   std::cout << "\nCACHE REPORT\n";
   std::cout << "============\n\n";
   std::cout << "Total Accesses: " << totalAccesses << "\n";
   std::cout << "Pattern: " << (sequential ? "Sequential" : "Random") << "\n\n";
 
-  auto printCache = [&](const char *label, const Sim &sim) {
+  auto printCache = [](const char *label, const Sim &sim) {
+    const double rate = sim.hitRate();
     std::cout << label << "\n";
-    std::cout << "  " << makeBar(sim.hitRate()) << " " << std::fixed << std::setprecision(2)
-              << sim.hitRate() << "%\n";
-    std::cout << "  Demand Hits: " << sim.stats.demandHits << " | Demand Misses: " << sim.stats.demandMisses << "\n";
-    std::cout << "  Prefetch Hits: " << sim.stats.prefetchHits << " | Prefetch Misses: " << sim.stats.prefetchMisses << "\n";
+    std::cout << "  " << makeBar(rate) << " " << std::fixed << std::setprecision(2) << rate << "%\n";
+    std::cout << "  Demand Hits: "    << sim.stats.demandHits   << " | Demand Misses: "  << sim.stats.demandMisses   << "\n";
+    std::cout << "  Prefetch Hits: "  << sim.stats.prefetchHits << " | Prefetch Misses: "<< sim.stats.prefetchMisses << "\n";
     std::cout << "  Miss Breakdown: cold " << sim.stats.coldMisses
-              << ", conflict " << sim.stats.conflictMisses
-              << ", capacity " << sim.stats.capacityMisses << "\n";
-    std::cout << "  Write-Backs: " << sim.stats.writeBacks << " | Dirty Evictions: " << sim.stats.dirtyEvictions
+              << ", conflict "             << sim.stats.conflictMisses
+              << ", capacity "             << sim.stats.capacityMisses << "\n";
+    std::cout << "  Write-Backs: "       << sim.stats.writeBacks
+              << " | Dirty Evictions: "  << sim.stats.dirtyEvictions
               << " | Write-Through Writes: " << sim.stats.writeThroughWrites << "\n\n";
   };
 
   printCache("L1D Sim:", l1d);
-  printCache("L2 Sim:", l2);
-  printCache("L3 Sim:", l3);
+  printCache("L2 Sim:",  l2);
+  printCache("L3 Sim:",  l3);
 
   if (tlb && tlb->config.entries > 0) {
     const uint64_t total = tlb->stats.hits + tlb->stats.misses;
-    const double rate = total ? (100.0 * tlb->stats.hits / total) : 0.0;
+    const double   rate  = total ? (100.0 * tlb->stats.hits / total) : 0.0;
     std::cout << "TLB:\n";
     std::cout << "  " << makeBar(rate) << " " << std::fixed << std::setprecision(2) << rate << "%\n";
     std::cout << "  Hits: " << tlb->stats.hits << " | Misses: " << tlb->stats.misses << "\n\n";
   }
 
-  std::cout << "AMAT (Average Memory Access Time): " << std::fixed << std::setprecision(2) << amat << " cycles\n";
+  std::cout << "AMAT (Average Memory Access Time): "
+            << std::fixed << std::setprecision(2) << amat << " cycles\n";
 }
