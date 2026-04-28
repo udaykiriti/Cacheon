@@ -17,16 +17,16 @@ namespace cli {
 
 // Default values each can be overridden at compile time
 #ifndef CACHEON_DEFAULT_TEST_SIZE
-#  define CACHEON_DEFAULT_TEST_SIZE (8ULL * 1024 * 1024)
+    #define CACHEON_DEFAULT_TEST_SIZE 0x800000ULL // 8MB
 #endif
 #ifndef CACHEON_DEFAULT_STRIDE
-#  define CACHEON_DEFAULT_STRIDE 64
+    #define CACHEON_DEFAULT_STRIDE 0x40 // 64 bytes
 #endif
 #ifndef CACHEON_DEFAULT_PAGE_SIZE
-#  define CACHEON_DEFAULT_PAGE_SIZE 4096
+    #define CACHEON_DEFAULT_PAGE_SIZE 0x1000 // 4KB
 #endif
 #ifndef CACHEON_HUGEPAGE_SIZE
-#  define CACHEON_HUGEPAGE_SIZE (2ULL * 1024 * 1024)
+    #define CACHEON_HUGEPAGE_SIZE 0x200000ULL // 2MB
 #endif
 
 constexpr uint64_t DEFAULT_TEST_SIZE = CACHEON_DEFAULT_TEST_SIZE;
@@ -46,9 +46,9 @@ struct Options {
     uint64_t    writeRate      = 0;
     Prefetcher  prefetcher     = Prefetcher::None;
     WritePolicy writePolicy    = WritePolicy::WriteBack;
-    CacheConfig l1{32 * 1024,       64, 8,  false, WritePolicy::WriteBack};
-    CacheConfig l2{256 * 1024,      64, 4,  false, WritePolicy::WriteBack};
-    CacheConfig l3{8 * 1024 * 1024, 64, 16, false, WritePolicy::WriteBack};
+    CacheConfig l1{0x8000,   0x40, 8,  false, WritePolicy::WriteBack};
+    CacheConfig l2{0x40000,  0x40, 4,  false, WritePolicy::WriteBack};
+    CacheConfig l3{0x800000, 0x40, 16, false, WritePolicy::WriteBack};
     TlbConfig   tlb{0, DEFAULT_PAGE_SIZE, true};
 };
 

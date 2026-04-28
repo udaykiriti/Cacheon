@@ -12,21 +12,21 @@
 
 // Version string  override with -DCACHEON_VERSION=\"x.y\" if needed
 #ifndef CACHEON_VERSION
-#  define CACHEON_VERSION "1.1"
+  #define CACHEON_VERSION "1.1"
 #endif
 
 // AMAT cycle costs  override at compile time e.g. -DCACHEON_CYCLES_L1=5
 #ifndef CACHEON_CYCLES_L1
-#  define CACHEON_CYCLES_L1      4
+  #define CACHEON_CYCLES_L1      4
 #endif
 #ifndef CACHEON_CYCLES_L2
-#  define CACHEON_CYCLES_L2     12
+  #define CACHEON_CYCLES_L2     12
 #endif
 #ifndef CACHEON_CYCLES_L3
-#  define CACHEON_CYCLES_L3     40
+  #define CACHEON_CYCLES_L3     40
 #endif
 #ifndef CACHEON_CYCLES_MEMORY
-#  define CACHEON_CYCLES_MEMORY 200
+  #define CACHEON_CYCLES_MEMORY 200
 #endif
 
 enum class WritePolicy {
@@ -82,11 +82,11 @@ struct TlbStats {
   uint64_t misses = 0;
 };
 
-// O(1) LRU Set encapsulation
+// O(1) LRU Set encapsulation for large sets
 using LruList    = std::list<uint64_t>;
 using LruIterMap = std::unordered_map<uint64_t, LruList::iterator>;
 
-struct LRUSet {
+struct HashLRUSet {
   std::unordered_set<uint64_t> tags;
   std::unordered_set<uint64_t> dirtyBits; // Only used by Sim, ignored by TLB/FA
   LruList    order;
@@ -115,17 +115,80 @@ struct LRUSet {
     return victim;
   }
 
+  void setDirty(uint64_t tag) {
+    dirtyBits.insert(tag);
+  }
+
   size_t size() const { return tags.size(); }
+};
+
+// O(N) array-backed LRU Set for small cache sets (eliminates hash/heap overhead)
+struct LinearLRUSet {
+  struct Block {
+    uint64_t tag;
+    bool dirty;
+  };
+  std::vector<Block> blocks;
+
+  bool contains(uint64_t tag) const {
+    for (const auto& b : blocks) {
+      if (b.tag == tag) return true;
+    }
+    return false;
+  }
+
+  void promote(uint64_t tag) {
+    for (size_t i = 0; i < blocks.size(); ++i) {
+      if (blocks[i].tag == tag) {
+        Block b = blocks[i];
+        for (size_t j = i; j < blocks.size() - 1; ++j) {
+          blocks[j] = blocks[j+1];
+        }
+        blocks.back() = b;
+        return;
+      }
+    }
+  }
+
+  void insert(uint64_t tag, bool isDirty = false) {
+    blocks.push_back({tag, isDirty});
+  }
+
+  uint64_t evict(bool* wasDirty = nullptr) {
+    Block victim = blocks.front();
+    if (wasDirty) *wasDirty = victim.dirty;
+    for (size_t i = 0; i < blocks.size() - 1; ++i) {
+      blocks[i] = blocks[i+1];
+    }
+    blocks.pop_back();
+    return victim.tag;
+  }
+
+  void setDirty(uint64_t tag) {
+    for (auto& b : blocks) {
+      if (b.tag == tag) {
+        b.dirty = true;
+        return;
+      }
+    }
+  }
+
+  size_t size() const { return blocks.size(); }
 };
 
 struct Sim {
   CacheConfig config;
   CacheStats  stats;
 
-  std::vector<LRUSet> sets;
+  std::vector<LinearLRUSet> sets;
   std::unordered_set<uint64_t> seenTags;
-  LRUSet faShadow;
+  HashLRUSet faShadow;
   uint64_t faCapacity = 0;
+
+  bool useBitwise = false;
+  uint64_t lineShift = 0;
+  uint64_t setMask = 0;
+  uint64_t tagShift = 0;
 
   explicit Sim(const CacheConfig &cfg);
 
@@ -139,7 +202,7 @@ struct Tlb {
   TlbConfig config;
   TlbStats  stats;
 
-  LRUSet store;
+  HashLRUSet store;
 
   explicit Tlb(const TlbConfig &cfg);
 

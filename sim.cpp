@@ -49,15 +49,34 @@ Sim::Sim(const CacheConfig &cfg) : config(cfg) {
   const std::size_t numSets =
       static_cast<std::size_t>(config.size / (config.lineSize * config.associativity));
   sets.resize(numSets);
+  for (auto& set : sets) {
+    set.blocks.reserve(config.associativity);
+  }
   faCapacity = config.lineSize ? (config.size / config.lineSize) : 0;
+
+  if (config.lineSize > 0 && numSets > 0 && 
+      (config.lineSize & (config.lineSize - 1)) == 0 && 
+      (numSets & (numSets - 1)) == 0) {
+    useBitwise = true;
+    lineShift = __builtin_ctzll(config.lineSize);
+    setMask   = numSets - 1;
+    tagShift  = lineShift + __builtin_ctzll(numSets);
+  }
 }
 
 bool Sim::access(uint64_t addr, bool isWrite, bool isPrefetch) {
   const std::size_t numSets = sets.size();
   if (numSets == 0) return false;
 
-  const std::size_t setIndex = static_cast<std::size_t>((addr / config.lineSize) % numSets);
-  const uint64_t    tag      = addr / (config.lineSize * numSets);
+  std::size_t setIndex;
+  uint64_t tag;
+  if (useBitwise) {
+    setIndex = (addr >> lineShift) & setMask;
+    tag      = addr >> tagShift;
+  } else {
+    setIndex = static_cast<std::size_t>((addr / config.lineSize) % numSets);
+    tag      = addr / (config.lineSize * numSets);
+  }
 
   auto &set = sets[setIndex];
 
@@ -71,7 +90,7 @@ bool Sim::access(uint64_t addr, bool isWrite, bool isPrefetch) {
 
     if (isWrite) {
       if (config.writePolicy == WritePolicy::WriteBack) {
-        set.dirtyBits.insert(tag);
+        set.setDirty(tag);
       } else {
         stats.writeThroughWrites++;
       }

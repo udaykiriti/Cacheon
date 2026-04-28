@@ -1,5 +1,5 @@
 CC     = g++
-CFLAGS = -std=c++17 -Wall -Wextra -O2
+CFLAGS = -std=c++17 -Wall -Wextra -O3 -march=native
 
 cacheon: cacheon.cpp sim.cpp sim.h cli.h
 	$(CC) $(CFLAGS) cacheon.cpp sim.cpp -o cacheon
@@ -29,6 +29,6 @@ run: cacheon
 	done
 
 clean:
-	rm -f cacheon cacheon_debug
+	rm -f cacheon cacheon.exe cacheon_debug cacheon_debug.exe
 
 .PHONY: run debug override clean
