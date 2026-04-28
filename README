@@ -2,24 +2,9 @@ Cacheon - Multi-level Cache Simulator
 
 A fast cache simulator for analyzing memory access patterns and cache behavior.
 
-NOTE! This is a quick hack, and the code itself has some hardcoded
-constants in it that you should look at and possibly change to match
-your machine.
-
-      #define L1D_SIZE 32768        // 32 KB
-      #define L1D_ASSOC 8
-      #define L1D_LINE 64
-      
-      #define L2_SIZE 262144        // 256 KB
-      #define L2_ASSOC 4
-      #define L2_LINE 64
-      
-      #define L3_SIZE 8388608       // 8 MB
-      #define L3_ASSOC 12
-      #define L3_LINE 64
-
-If you want to test a different CPU's cache hierarchy, edit cacheon.cpp
-and change these values to match your machine, then rebuild.
+NOTE! The cache hierarchy is now configurable via CLI flags, so you
+can change sizes, line sizes, and associativity without editing code.
+Use --l1/--l2/--l3 with SIZE,LINE,ASSOC (e.g., 32K,64,8).
 
 In addition to the tweakables in the code itself, there are hardcoded
 default values in the command line interface:
@@ -39,27 +24,27 @@ You can use odd stride values to see how unaligned loads change the picture.
 
 BUILD
 
-  make
+make
 
 RUN
 
 Quick test:
-  ./cacheon 8M 64
+./cacheon 8M 64
 
 Full benchmark (4K to 256M):
-  ./cacheon --all-sizes
+./cacheon --all-sizes
 
 Test with random access:
-  ./cacheon 128M 64 -r
+./cacheon 128M 64 -r
 
 Test with hugepage mode:
-  ./cacheon 256M 256 -H
+./cacheon 256M 256 -H
 
 Test with both random and hugepage:
-  ./cacheon 128M 64 -Hr
+./cacheon 128M 64 -Hr
 
 Quiet mode (for scripts and pipelines):
-  ./cacheon 64M 64 -q
+./cacheon 64M 64 -q
 
 WHAT IS IT?
 
@@ -74,7 +59,6 @@ IMPORTANT NOTES
    times with different sizes to see patterns.
 
 2. The cache behavior depends heavily on the working set size:
-   
    - If test size << L1D size, you'll see high L1D hit rates
    - If L1D size < test size < L2 size, L1D misses hit in L2
    - If L2 size < test size < L3 size, L2 misses hit in L3
@@ -99,47 +83,61 @@ IMPORTANT NOTES
 USAGE
 
 Syntax:
-  cacheon SIZE STRIDE [OPTIONS]
+cacheon SIZE STRIDE [OPTIONS]
 
 SIZE:
-  Memory size to test. Examples: 4K, 8M, 256M, 1G
-  Default: 8M
+Memory size to test. Examples: 4K, 8M, 256M, 1G
+Default: 8M
 
 STRIDE:
-  Stride between accesses in bytes. Should match cache line size.
-  Default: 64
+Stride between accesses in bytes. Should match cache line size.
+Default: 64
 
 OPTIONS:
-  -r, --random      Random access pattern (default: sequential)
-  -H, --hugepage    Hugepage/contiguous memory mode
-  -Hr, -rH          Both random and hugepage
-  -q, --quiet       Quiet output (for scripting)
-  --all-sizes       Run full benchmark across 4K to 256M sizes
-  -h, --help        Show help
-  -v, --version     Show version
+-r, --random Random access pattern (default: sequential)
+-H, --hugepage Hugepage/contiguous memory mode
+-Hr, -rH Both random and hugepage
+-q, --quiet Quiet output (for scripting)
+--l1 SIZE,LINE,ASSOC Override L1 config (e.g., 32K,64,8)
+--l2 SIZE,LINE,ASSOC Override L2 config
+--l3 SIZE,LINE,ASSOC Override L3 config
+--write-policy wb|wt Write-back or write-through
+--write-rate N Percent writes (0-100)
+--prefetch none|next|stride Prefetcher mode
+--tlb-entries N Enable TLB with N entries
+--page-size SIZE TLB page size (default 4K)
+--all-sizes Run full benchmark across 4K to 256M sizes
+-h, --help Show help
+-v, --version Show version
 
 EXAMPLES
 
 Test 32MB with sequential access:
-  ./cacheon 32M 64
+./cacheon 32M 64
 
 Test 256MB with random access:
-  ./cacheon 256M 64 -r
+./cacheon 256M 64 -r
 
 Test with larger stride (e.g., for systems with 256-byte cache lines):
-  ./cacheon 128M 256
+./cacheon 128M 256
+
+Custom cache hierarchy and write policy:
+./cacheon 64M 64 --l1 64K,64,8 --l2 512K,64,8 --l3 16M,64,16 --write-policy wt
+
+Enable prefetching and a small TLB:
+./cacheon 128M 64 --prefetch stride --tlb-entries 64 --page-size 4K
 
 Test with hugepage mode for contiguous memory:
-  ./cacheon 512M 64 -H
+./cacheon 512M 64 -H
 
 Random test with hugepage:
-  ./cacheon 128M 128 -Hr
+./cacheon 128M 128 -Hr
 
 Quiet mode for scripting:
-  ./cacheon 16M 64 -q
+./cacheon 16M 64 -q
 
 Run full benchmark suite:
-  make run
+make run
 
 GOTCHAS
 
@@ -163,50 +161,46 @@ GOTCHAS
    in cache. Real programs have more complex access patterns, prefetching,
    and temporal/spatial locality variations.
 
-OUTPUT 
+OUTPUT
 
-CACHE REPORT
-============
+# CACHE REPORT
 
 Total Accesses: 131072
 Pattern: Sequential
 
 L1D Cache (32KB):
-  [                    ] 0.00%
-  Hits: 0 | Misses: 131072
+[ ] 0.00%
+Hits: 0 | Misses: 131072
 
 L2 Cache (256KB):
-  [                    ] 0.00%
-  Hits: 0 | Misses: 131072
+[ ] 0.00%
+Hits: 0 | Misses: 131072
 
 L3 Cache (8MB):
-  [==========          ] 50.00%
-  Hits: 65536 | Misses: 65536
+[========== ] 50.00%
+Hits: 65536 | Misses: 65536
 
 AMAT (Average Memory Access Time): 120.00 cycles
 
 The output shows:
 
-1. Progress bar [====    ] visualization of hit rate
+1. Progress bar [==== ] visualization of hit rate
 2. Percentage (0-100%) for each cache level
 3. Absolute hit/miss counts
 4. AMAT in CPU cycles (how long each access takes on average)
 
 AMAT Calculation
 
-Average Memory Access Time = 4×(L1_hit%) + 12×(L1_miss% × L2_hit%) 
-                           + 40×(L1_miss% × L2_miss% × L3_hit%)
-                           + 200×(all_misses%)
+Average Memory Access Time = 4×(L1_hit%) + 12×(L1_miss% × L2_hit%) + 40×(L1_miss% × L2_miss% × L3_hit%) + 200×(all_misses%)
 
 Where cycle times are:
-  L1D hit: 4 cycles
-  L2 hit:  12 cycles
-  L3 hit:  40 cycles
-  Memory:  200 cycles
+L1D hit: 4 cycles
+L2 hit: 12 cycles
+L3 hit: 40 cycles
+Memory: 200 cycles
 
 Lower AMAT means faster memory access on average.
 
 LICENSE
 
 MIT License - See LICENSE file
-
