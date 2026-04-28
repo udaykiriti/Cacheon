@@ -199,6 +199,7 @@ inline void validateCacheConfig(const CacheConfig &cfg, const char *name) {
 }
 
 inline void runForSize(uint64_t size, const Options &options) {
+    ScopedTimer timer(options.quiet);
     if (!options.quiet) printSizeHeader(size);
 
     Sim l1d(options.l1);

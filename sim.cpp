@@ -32,7 +32,18 @@ namespace {
       }
     }
   }
+
 } // namespace
+
+ScopedTimer::ScopedTimer(bool q) : start(Clock::now()), quiet(q) {}
+
+ScopedTimer::~ScopedTimer() {
+  if (!quiet) {
+    auto end = Clock::now();
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    std::cout << "\n[Execution Time: " << ms << " ms]\n";
+  }
+}
 
 Sim::Sim(const CacheConfig &cfg) : config(cfg) {
   const std::size_t numSets =
@@ -132,6 +143,20 @@ double Sim::hitRate() const {
   return total ? (100.0 * stats.demandHits / total) : 0.0;
 }
 
+std::ostream& operator<<(std::ostream& os, const Sim& sim) {
+  const double rate = sim.hitRate();
+  os << "  " << makeBar(rate) << " " << std::fixed << std::setprecision(2) << rate << "%\n"
+     << "  Demand Hits: "   << sim.stats.demandHits   << " | Demand Misses: "   << sim.stats.demandMisses   << "\n"
+     << "  Prefetch Hits: " << sim.stats.prefetchHits << " | Prefetch Misses: " << sim.stats.prefetchMisses << "\n"
+     << "  Miss Breakdown: cold " << sim.stats.coldMisses 
+     << ", conflict " << sim.stats.conflictMisses 
+     << ", capacity " << sim.stats.capacityMisses << "\n"
+     << "  Write-Backs: " << sim.stats.writeBacks 
+     << " | Dirty Evictions: " << sim.stats.dirtyEvictions 
+     << " | Write-Through Writes: " << sim.stats.writeThroughWrites << "\n\n";
+  return os;
+}
+
 Tlb::Tlb(const TlbConfig &cfg) : config(cfg) {}
 
 bool Tlb::access(uint64_t addr) {
@@ -154,6 +179,16 @@ bool Tlb::access(uint64_t addr) {
   }
   store.insert(tag);
   return false;
+}
+
+std::ostream& operator<<(std::ostream& os, const Tlb& tlb) {
+  if (tlb.config.entries == 0) return os;
+  const uint64_t total = tlb.stats.hits + tlb.stats.misses;
+  const double rate = total ? (100.0 * tlb.stats.hits / total) : 0.0;
+  os << "TLB Sim:\n"
+     << "  " << makeBar(rate) << " " << std::fixed << std::setprecision(2) << rate << "%\n"
+     << "  Hits: " << tlb.stats.hits << " | Misses: " << tlb.stats.misses << "\n\n";
+  return os;
 }
 
 uint64_t passCount(uint64_t accessCount) {
@@ -263,35 +298,15 @@ void printResults(const Sim &l1d, const Sim &l2, const Sim &l3, const Tlb *tlb,
                     + CYCLES_L3     * l1Miss * l2Miss * (l3Hit / 100.0)
                     + CYCLES_MEMORY * l1Miss * l2Miss * l3Miss;
 
-  std::cout << "\nCACHE REPORT\n";
-  std::cout << "============\n\n";
-  std::cout << "Total Accesses: " << totalAccesses << "\n";
-  std::cout << "Pattern: " << (sequential ? "Sequential" : "Random") << "\n\n";
+  std::cout << "\nCACHE REPORT\n============\n\n"
+            << "Total Accesses: " << totalAccesses << "\n"
+            << "Pattern: " << (sequential ? "Sequential" : "Random") << "\n\n"
+            << "L1D Sim:\n" << l1d
+            << "L2 Sim:\n"  << l2
+            << "L3 Sim:\n"  << l3;
 
-  auto printCache = [](const char *label, const Sim &sim) {
-    const double rate = sim.hitRate();
-    std::cout << label << "\n";
-    std::cout << "  " << makeBar(rate) << " " << std::fixed << std::setprecision(2) << rate << "%\n";
-    std::cout << "  Demand Hits: "    << sim.stats.demandHits   << " | Demand Misses: "  << sim.stats.demandMisses   << "\n";
-    std::cout << "  Prefetch Hits: "  << sim.stats.prefetchHits << " | Prefetch Misses: "<< sim.stats.prefetchMisses << "\n";
-    std::cout << "  Miss Breakdown: cold " << sim.stats.coldMisses
-              << ", conflict "             << sim.stats.conflictMisses
-              << ", capacity "             << sim.stats.capacityMisses << "\n";
-    std::cout << "  Write-Backs: "       << sim.stats.writeBacks
-              << " | Dirty Evictions: "  << sim.stats.dirtyEvictions
-              << " | Write-Through Writes: " << sim.stats.writeThroughWrites << "\n\n";
-  };
-
-  printCache("L1D Sim:", l1d);
-  printCache("L2 Sim:",  l2);
-  printCache("L3 Sim:",  l3);
-
-  if (tlb && tlb->config.entries > 0) {
-    const uint64_t total = tlb->stats.hits + tlb->stats.misses;
-    const double   rate  = total ? (100.0 * tlb->stats.hits / total) : 0.0;
-    std::cout << "TLB:\n";
-    std::cout << "  " << makeBar(rate) << " " << std::fixed << std::setprecision(2) << rate << "%\n";
-    std::cout << "  Hits: " << tlb->stats.hits << " | Misses: " << tlb->stats.misses << "\n\n";
+  if (tlb) {
+    std::cout << *tlb;
   }
 
   std::cout << "AMAT (Average Memory Access Time): "

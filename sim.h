@@ -1,8 +1,10 @@
 #ifndef CACHEON_SIM_H
 #define CACHEON_SIM_H
 
+#include <chrono>
 #include <cstdint>
 #include <list>
+#include <ostream>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -36,6 +38,16 @@ enum class Prefetcher {
   None,
   NextLine,
   Stride
+};
+
+// RAII Timer for measuring execution time
+class ScopedTimer {
+  using Clock = std::chrono::high_resolution_clock;
+  std::chrono::time_point<Clock> start;
+  bool quiet;
+public:
+  explicit ScopedTimer(bool q = false);
+  ~ScopedTimer();
 };
 
 struct CacheConfig {
@@ -119,6 +131,8 @@ struct Sim {
 
   [[nodiscard]] bool   access(uint64_t addr, bool isWrite, bool isPrefetch);
   [[nodiscard]] double hitRate() const;
+
+  friend std::ostream& operator<<(std::ostream& os, const Sim& sim);
 };
 
 struct Tlb {
@@ -130,6 +144,8 @@ struct Tlb {
   explicit Tlb(const TlbConfig &cfg);
 
   [[nodiscard]] bool access(uint64_t addr);
+
+  friend std::ostream& operator<<(std::ostream& os, const Tlb& tlb);
 };
 
 [[nodiscard]] uint64_t passCount(uint64_t accessCount);
