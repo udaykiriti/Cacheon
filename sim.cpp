@@ -182,7 +182,7 @@ bool Tlb::access(uint64_t addr) {
   // Caller must only invoke this when entries > 0 and pageSize > 0
   assert(config.entries > 0 && config.pageSize > 0);
 
-  const uint64_t tag = addr / config.pageSize;
+  const uint64_t tag = addr >> config.pageBits;
 
   if (store.contains(tag)) {
     stats.hits++;

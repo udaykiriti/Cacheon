@@ -164,7 +164,11 @@ inline Options parseOptions(int argc, char *argv[]) {
         if (arg == "--l3")           { options.l3 = parseCacheSpec(requireNextArg(arg), options.l3); continue; }
         if (arg == "--write-policy") { options.writePolicy = parseWritePolicy(requireNextArg(arg)); continue; }
         if (arg == "--prefetch")     { options.prefetcher  = parsePrefetcher(requireNextArg(arg));  continue; }
-        if (arg == "--page-size")    { options.tlb.pageSize = parseSize(requireNextArg(arg));       continue; }
+        if (arg == "--page-size") {
+            options.tlb.pageSize = parseSize(requireNextArg(arg));
+            options.tlb.pageBits = static_cast<uint64_t>(__builtin_ctzll(options.tlb.pageSize));
+            continue;
+        }
         if (arg == "--tlb-entries")  { options.tlb.entries  = std::strtoull(requireNextArg(arg), nullptr, 10); continue; }
 
         if (arg == "--write-rate") {
@@ -173,8 +177,8 @@ inline Options parseOptions(int argc, char *argv[]) {
             continue;
         }
 
-        if (arg == "-H" || arg == "--hugepage") { options.tlb.pageSize = HUGEPAGE_SIZE; continue; }
-        if (arg == "-Hr" || arg == "-rH")       { options.randomAccess = true; options.tlb.pageSize = HUGEPAGE_SIZE; continue; }
+        if (arg == "-H" || arg == "--hugepage") { options.tlb.pageSize = HUGEPAGE_SIZE; options.tlb.pageBits = static_cast<uint64_t>(__builtin_ctzll(HUGEPAGE_SIZE)); continue; }
+        if (arg == "-Hr" || arg == "-rH")       { options.randomAccess = true; options.tlb.pageSize = HUGEPAGE_SIZE; options.tlb.pageBits = static_cast<uint64_t>(__builtin_ctzll(HUGEPAGE_SIZE)); continue; }
 
         if (arg[0] != '-') {
             if      (positionalCount == 0) { options.testSize = parseSize(argv[i]); positionalCount++; }

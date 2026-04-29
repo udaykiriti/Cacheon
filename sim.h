@@ -72,8 +72,9 @@ struct CacheStats {
 };
 
 struct TlbConfig {
-  uint64_t entries = 0;
+  uint64_t entries  = 0;
   uint64_t pageSize = 4096;
+  uint64_t pageBits = 12;   // log2(pageSize) — precomputed for bitwise shift
   bool useLRU = true;
 };
 
