@@ -1,6 +1,7 @@
 #ifndef CACHEON_SIM_H
 #define CACHEON_SIM_H
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <list>
@@ -139,13 +140,9 @@ struct LinearLRUSet {
   }
 
   void promote(uint64_t tag) {
-    for (size_t i = 0; i < blocks.size(); ++i) {
-      if (blocks[i].tag == tag) {
-        Block b = blocks[i];
-        for (size_t j = i; j < blocks.size() - 1; ++j) {
-          blocks[j] = blocks[j+1];
-        }
-        blocks.back() = b;
+    for (auto it = blocks.begin(); it != blocks.end(); ++it) {
+      if (it->tag == tag) {
+        std::rotate(it, it + 1, blocks.end());
         return;
       }
     }
@@ -158,9 +155,7 @@ struct LinearLRUSet {
   uint64_t evict(bool* wasDirty = nullptr) {
     Block victim = blocks.front();
     if (wasDirty) *wasDirty = victim.dirty;
-    for (size_t i = 0; i < blocks.size() - 1; ++i) {
-      blocks[i] = blocks[i+1];
-    }
+    std::rotate(blocks.begin(), blocks.begin() + 1, blocks.end());
     blocks.pop_back();
     return victim.tag;
   }

@@ -254,14 +254,16 @@ void runSimulation(Sim &l1d, Sim &l2, Sim &l3, Tlb *tlb, uint64_t size, uint64_t
     }
   };
 
+  const bool doWrites = writeRate > 0;
+
   for (uint64_t pass = 0; pass < numPasses; pass++) {
     for (uint64_t i = 0; i < accessCount; i++) {
       const uint64_t addr    = randomAccess ? (addrDis(addrGen) & ~(stride - 1)) : (i * stride);
-      const bool     isWrite = writeRate > 0 && writeDis(writeGen) < writeRate;
+      const bool     isWrite = doWrites && writeDis(writeGen) < writeRate;
       recordAccess(addr, isWrite, false);
       maybePrefetch(addr);
-      totalAccesses++;
     }
+    totalAccesses += accessCount;
     // Don't reseed for random access — each pass should use a different sequence,
     // not repeat the same addresses (the old reseed made all passes identical).
   }

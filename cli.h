@@ -113,19 +113,17 @@ inline std::string toLowerStr(const char *arg) {
 
 inline WritePolicy parseWritePolicy(const char *arg) {
     const std::string lower = toLowerStr(arg);
-    const std::string value(arg ? arg : "");
     if (lower == "wb" || lower == "write-back"    || lower == "writeback")    return WritePolicy::WriteBack;
     if (lower == "wt" || lower == "write-through" || lower == "writethrough") return WritePolicy::WriteThrough;
-    throw std::runtime_error("Unknown write policy: " + value);
+    throw std::runtime_error(std::string("Unknown write policy: ") + (arg ? arg : ""));
 }
 
 inline Prefetcher parsePrefetcher(const char *arg) {
     const std::string lower = toLowerStr(arg);
-    const std::string value(arg ? arg : "");
     if (lower == "none")                         return Prefetcher::None;
     if (lower == "next" || lower == "nextline")  return Prefetcher::NextLine;
     if (lower == "stride")                       return Prefetcher::Stride;
-    throw std::runtime_error("Unknown prefetcher: " + value);
+    throw std::runtime_error(std::string("Unknown prefetcher: ") + (arg ? arg : ""));
 }
 
 inline std::string formatSize(uint64_t size) {
