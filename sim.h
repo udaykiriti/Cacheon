@@ -155,7 +155,7 @@ struct LinearLRUSet {
   uint64_t evict(bool* wasDirty = nullptr) {
     Block victim = blocks.front();
     if (wasDirty) *wasDirty = victim.dirty;
-    std::rotate(blocks.begin(), blocks.begin() + 1, blocks.end());
+    std::move(blocks.begin() + 1, blocks.end(), blocks.begin());
     blocks.pop_back();
     return victim.tag;
   }
