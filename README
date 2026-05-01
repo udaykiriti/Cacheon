@@ -185,34 +185,6 @@ AMAT FORMULA
 
     Cycle costs: L1=4, L2=12, L3=40, Memory=200
 
-    Lower AMAT = faster average memory access.
-
-CHANGELOG (recent patches)
-
-    Bug fixes applied:
-    - parseSize now uses strtoull (was strtoll; accepted negative sizes)
-    - Random access mode validates stride is power-of-two before running
-    - -H / --hugepage now correctly sets TLB page size to 2MB (was no-op)
-    - Positional args (SIZE, STRIDE) now parsed by order seen, not argv index
-      (flags before SIZE no longer silently discard the size argument)
-    - validateCacheConfig now rejects size=0 in addition to lineSize=0
-    - FA shadow cache eviction off-by-one corrected
-
-    Code improvements:
-    - Extremely optimized `LinearLRUSet` introduced for cache sets, replacing
-      hash maps with zero-allocation array shifting for 85% faster throughput.
-    - Bitwise math (shifts & masks) completely replaces slow modulo/division 
-      for memory address calculations.
-    - `cli.h` header cleanly separates options parsing from core simulation logic.
-    - C++ RAII `ScopedTimer` integrated for precise `std::chrono` benchmarking.
-    - Added `operator<<` overloads for idiomatic stream printing.
-    - Codebase standardized to use `0x` hexadecimal notation for memory sizing.
-    - Makefile updated with `-O3 -march=native` for maximum performance.
-    - LRU replacement uses O(1) list-splice + iterator map for large FA/TLB sets.
-    - RNG no longer reseeds between passes — each pass uses a unique sequence.
-    - TLB only constructed when --tlb-entries is specified.
-    - parseOptions no longer calls std::exit() internally.
-
 LICENSE
 
 MIT License - See LICENSE file
