@@ -271,9 +271,11 @@ void runSimulation(Sim &l1d, Sim &l2, Sim &l3, Tlb *tlb, uint64_t size, uint64_t
 
 std::string makeBar(double percentage, int width) {
   const int filled = static_cast<int>(percentage / 100.0 * width);
-  return '[' + std::string(static_cast<std::size_t>(filled), '=')
-             + std::string(static_cast<std::size_t>(width - filled), ' ')
-             + ']';
+  std::string bar(static_cast<std::size_t>(width + 2), ' ');
+  bar.front() = '[';
+  bar.back()  = ']';
+  std::fill_n(bar.begin() + 1, filled, '=');
+  return bar;
 }
 
 uint64_t parseSize(const char *str) {
