@@ -80,17 +80,17 @@ bool Sim::access(uint64_t addr, bool isWrite, bool isPrefetch) {
 
   auto &set = sets[setIndex];
 
-  // --- Cache hit ---
-  if (set.contains(tag)) {
+  // Cache hit
+  const bool hit = config.useLRU ? set.promoteIfContains(tag) : set.contains(tag);
+  if (hit) {
     isPrefetch ? stats.prefetchHits++ : stats.demandHits++;
-
-    if (config.useLRU) {
-      set.promote(tag);
-    }
 
     if (isWrite) {
       if (config.writePolicy == WritePolicy::WriteBack) {
-        set.setDirty(tag);
+        // After promoteIfContains the tag is at blocks.back(); skip the scan.
+        // FIFO path still needs the search since order didn't change.
+        if (config.useLRU) set.blocks.back().dirty = true;
+        else               set.setDirty(tag);
       } else {
         stats.writeThroughWrites++;
       }
@@ -220,6 +220,14 @@ void runSimulation(Sim &l1d, Sim &l2, Sim &l3, Tlb *tlb, uint64_t size, uint64_t
                    bool randomAccess, uint64_t numPasses, uint64_t writeRate,
                    Prefetcher prefetcher, uint64_t &totalAccesses) {
   const uint64_t accessCount = size / stride;
+
+  // Pre-size cold-miss trackers to the max number of unique cache lines in the
+  // test range, eliminating rehash events during the inner loop.
+  const uint64_t uniqueLines = size / l1d.config.lineSize;
+  l1d.seenTags.reserve(uniqueLines);
+  l2.seenTags.reserve(uniqueLines);
+  l3.seenTags.reserve(uniqueLines);
+
   std::mt19937_64 addrGen(RANDOM_SEED);
   std::mt19937_64 writeGen(WRITE_SEED);
   std::uniform_int_distribution<uint64_t> addrDis(0, size - stride);
@@ -254,11 +262,13 @@ void runSimulation(Sim &l1d, Sim &l2, Sim &l3, Tlb *tlb, uint64_t size, uint64_t
     }
   };
 
-  const bool doWrites = writeRate > 0;
+  const bool     doWrites  = writeRate > 0;
+  const uint64_t alignMask = ~(stride - 1); // loop-invariant; hoisted from random branch
 
   for (uint64_t pass = 0; pass < numPasses; pass++) {
-    for (uint64_t i = 0; i < accessCount; i++) {
-      const uint64_t addr    = randomAccess ? (addrDis(addrGen) & ~(stride - 1)) : (i * stride);
+    uint64_t seqAddr = 0; // sequential accumulator: add replaces multiply each iteration
+    for (uint64_t i = 0; i < accessCount; i++, seqAddr += stride) {
+      const uint64_t addr    = randomAccess ? (addrDis(addrGen) & alignMask) : seqAddr;
       const bool     isWrite = doWrites && writeDis(writeGen) < writeRate;
       recordAccess(addr, isWrite, false);
       maybePrefetch(addr);

@@ -75,7 +75,7 @@ struct CacheStats {
 struct TlbConfig {
   uint64_t entries  = 0;
   uint64_t pageSize = 4096;
-  uint64_t pageBits = 12;   // log2(pageSize) — precomputed for bitwise shift
+  uint64_t pageBits = 12;   // log2(pageSize) - precomputed for bitwise shift
   bool useLRU = true;
 };
 
@@ -90,35 +90,27 @@ using LruIterMap = std::unordered_map<uint64_t, LruList::iterator>;
 
 struct HashLRUSet {
   std::unordered_set<uint64_t> tags;
-  std::unordered_set<uint64_t> dirtyBits; // Only used by Sim, ignored by TLB/FA
   LruList    order;
   LruIterMap iterMap;
 
-  bool contains(uint64_t tag) const { return tags.count(tag); }
-  
+  bool contains(uint64_t tag) const { return tags.contains(tag); }
+
   void promote(uint64_t tag) {
     order.splice(order.end(), order, iterMap.at(tag));
   }
-  
-  void insert(uint64_t tag, bool isDirty = false) {
+
+  void insert(uint64_t tag) {
     tags.insert(tag);
-    if (isDirty) dirtyBits.insert(tag);
     iterMap[tag] = order.insert(order.end(), tag);
   }
-  
+
   uint64_t evict(bool* wasDirty = nullptr) {
     uint64_t victim = order.front();
     order.pop_front();
     iterMap.erase(victim);
     tags.erase(victim);
-    if (wasDirty) {
-      *wasDirty = dirtyBits.erase(victim);
-    }
+    if (wasDirty) *wasDirty = false; // HashLRUSet never tracks dirty state
     return victim;
-  }
-
-  void setDirty(uint64_t tag) {
-    dirtyBits.insert(tag);
   }
 
   size_t size() const { return tags.size(); }
@@ -139,13 +131,19 @@ struct LinearLRUSet {
     return false;
   }
 
-  void promote(uint64_t tag) {
+
+  // Fuses contains + promote into one scan: returns true and moves tag to MRU
+  // position if found, false if not. Eliminates the double-scan on every hit.
+  bool promoteIfContains(uint64_t tag) {
     for (auto it = blocks.begin(); it != blocks.end(); ++it) {
       if (it->tag == tag) {
-        std::rotate(it, it + 1, blocks.end());
-        return;
+        Block saved = *it;
+        std::move(it + 1, blocks.end(), it);
+        blocks.back() = saved;
+        return true;
       }
     }
+    return false;
   }
 
   void insert(uint64_t tag, bool isDirty = false) {
