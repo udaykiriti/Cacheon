@@ -104,13 +104,11 @@ struct HashLRUSet {
     iterMap[tag] = order.insert(order.end(), tag);
   }
 
-  uint64_t evict(bool* wasDirty = nullptr) {
+  void evict() {
     uint64_t victim = order.front();
     order.pop_front();
     iterMap.erase(victim);
     tags.erase(victim);
-    if (wasDirty) *wasDirty = false; // HashLRUSet never tracks dirty state
-    return victim;
   }
 
   size_t size() const { return tags.size(); }
@@ -131,7 +129,6 @@ struct LinearLRUSet {
     return false;
   }
 
-
   // Fuses contains + promote into one scan: returns true and moves tag to MRU
   // position if found, false if not. Eliminates the double-scan on every hit.
   bool promoteIfContains(uint64_t tag) {
@@ -150,12 +147,11 @@ struct LinearLRUSet {
     blocks.push_back({tag, isDirty});
   }
 
-  uint64_t evict(bool* wasDirty = nullptr) {
+  void evict(bool* wasDirty = nullptr) {
     Block victim = blocks.front();
     if (wasDirty) *wasDirty = victim.dirty;
     std::move(blocks.begin() + 1, blocks.end(), blocks.begin());
     blocks.pop_back();
-    return victim.tag;
   }
 
   void setDirty(uint64_t tag) {

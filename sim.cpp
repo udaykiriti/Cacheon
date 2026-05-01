@@ -106,6 +106,9 @@ bool Sim::access(uint64_t addr, bool isWrite, bool isPrefetch) {
   }
 
   // --- Cache miss ---
+  // inFaShadow: computed during demand-miss classification and reused in the
+  // shadow update below — avoids a second hash lookup on the same key.
+  bool inFaShadow = false;
   if (isPrefetch) {
     stats.prefetchMisses++;
   } else {
@@ -113,13 +116,12 @@ bool Sim::access(uint64_t addr, bool isWrite, bool isPrefetch) {
     const bool isCold = seenTags.insert(tag).second;
     if (isCold) {
       stats.coldMisses++;
-    } else if (faShadow.contains(tag)) {
-      stats.conflictMisses++;
     } else {
-      stats.capacityMisses++;
+      inFaShadow = faShadow.contains(tag); // saved for reuse
+      inFaShadow ? stats.conflictMisses++ : stats.capacityMisses++;
     }
 #ifdef CACHEON_DEBUG
-    const char *missType = isCold ? "cold" : faShadow.contains(tag) ? "conflict" : "capacity";
+    const char *missType = isCold ? "cold" : inFaShadow ? "conflict" : "capacity";
     std::cerr << "[debug] MISS set=" << setIndex << " tag=" << tag << " " << missType << "\n";
 #endif
   }
@@ -128,7 +130,7 @@ bool Sim::access(uint64_t addr, bool isWrite, bool isPrefetch) {
   if (set.size() >= config.associativity) {
     bool wasDirty = false;
     set.evict(&wasDirty);
-    
+
     if (wasDirty && config.writePolicy == WritePolicy::WriteBack) {
       stats.dirtyEvictions++;
       stats.writeBacks++;
@@ -138,14 +140,17 @@ bool Sim::access(uint64_t addr, bool isWrite, bool isPrefetch) {
   // Insert new tag
   const bool isDirtyWrite = isWrite && (config.writePolicy == WritePolicy::WriteBack);
   set.insert(tag, isDirtyWrite);
-  
+
   if (isWrite && !isDirtyWrite) {
     stats.writeThroughWrites++;
   }
 
-  // Update fully-associative shadow for conflict-miss classification
+  // Update fully-associative shadow for conflict-miss classification.
+  // Demand misses: reuse inFaShadow (no second lookup).
+  // Prefetch misses: evaluate now (classification block was skipped above).
   if (faCapacity > 0) {
-    if (faShadow.contains(tag)) {
+    const bool shadowHit = isPrefetch ? faShadow.contains(tag) : inFaShadow;
+    if (shadowHit) {
       faShadow.promote(tag);
     } else {
       if (faShadow.size() >= faCapacity) {

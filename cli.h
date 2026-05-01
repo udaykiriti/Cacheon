@@ -22,17 +22,13 @@ namespace cli {
 #ifndef CACHEON_DEFAULT_STRIDE
     #define CACHEON_DEFAULT_STRIDE 0x40 // 64 bytes
 #endif
-#ifndef CACHEON_DEFAULT_PAGE_SIZE
-    #define CACHEON_DEFAULT_PAGE_SIZE 0x1000 // 4KB
-#endif
 #ifndef CACHEON_HUGEPAGE_SIZE
     #define CACHEON_HUGEPAGE_SIZE 0x200000ULL // 2MB
 #endif
-
 constexpr uint64_t DEFAULT_TEST_SIZE = CACHEON_DEFAULT_TEST_SIZE;
 constexpr uint64_t DEFAULT_STRIDE    = CACHEON_DEFAULT_STRIDE;
-constexpr uint64_t DEFAULT_PAGE_SIZE = CACHEON_DEFAULT_PAGE_SIZE;
 constexpr uint64_t HUGEPAGE_SIZE     = CACHEON_HUGEPAGE_SIZE;
+constexpr uint64_t HUGEPAGE_BITS     = __builtin_ctzll(HUGEPAGE_SIZE); // log2(2MB) = 21
 
 struct Options {
     uint64_t    testSize       = DEFAULT_TEST_SIZE;
@@ -49,7 +45,7 @@ struct Options {
     CacheConfig l1{0x8000,   0x40, 8,  false, WritePolicy::WriteBack};
     CacheConfig l2{0x40000,  0x40, 4,  false, WritePolicy::WriteBack};
     CacheConfig l3{0x800000, 0x40, 16, false, WritePolicy::WriteBack};
-    TlbConfig   tlb{0, DEFAULT_PAGE_SIZE, true};
+    TlbConfig   tlb{};
 };
 
 inline void printUsage() {
@@ -175,8 +171,8 @@ inline Options parseOptions(int argc, char *argv[]) {
             continue;
         }
 
-        if (arg == "-H" || arg == "--hugepage") { options.tlb.pageSize = HUGEPAGE_SIZE; options.tlb.pageBits = static_cast<uint64_t>(__builtin_ctzll(HUGEPAGE_SIZE)); continue; }
-        if (arg == "-Hr" || arg == "-rH")       { options.randomAccess = true; options.tlb.pageSize = HUGEPAGE_SIZE; options.tlb.pageBits = static_cast<uint64_t>(__builtin_ctzll(HUGEPAGE_SIZE)); continue; }
+        if (arg == "-H" || arg == "--hugepage") { options.tlb.pageSize = HUGEPAGE_SIZE; options.tlb.pageBits = HUGEPAGE_BITS; continue; }
+        if (arg == "-Hr" || arg == "-rH")       { options.randomAccess = true; options.tlb.pageSize = HUGEPAGE_SIZE; options.tlb.pageBits = HUGEPAGE_BITS; continue; }
 
         if (arg[0] != '-') {
             if      (positionalCount == 0) { options.testSize = parseSize(argv[i]); positionalCount++; }
